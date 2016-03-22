@@ -1,6 +1,6 @@
 {
   "name": "cycle-workflows",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Provides Plugin-based Workflows to cycle.js applications.",
   "main": "index.js",
   "scripts": {

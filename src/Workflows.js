@@ -26,19 +26,19 @@ const
         WORKFLOW_DELETED: 'The workflow has been deleted.',
         READONLY_MODE: 'This method cannot be invoked in readonly mode.'
     },
-    
+
     throwIfDeleted = wf => {
         if (!data.has(wf)) {
             throw new Error(Errors.WORKFLOW_DELETED);
         }
     },
-    
+
     readOnlyMethod = () => {
         throw new Error(Errors.READONLY_MODE);
     };
 
 /**
- * @classdesc 
+ * @classdesc
  * Executes any {@link WorkflowStep} instances associated with
  * the name of the Workflow instance, in dependency-safe order,
  * with automatic rollback of executed steps if any steps fail.
@@ -88,13 +88,13 @@ const
  *   });
  */
 export class Workflow extends Plugin {
-    
+
     /**
      * The workflow was deleted.
      * @event Workflow.Deleted
      * @param {Workflow} instance
      */
-    
+
     /**
      * The workflow was dispatched.
      * @event Workflow.Dispatched
@@ -102,14 +102,14 @@ export class Workflow extends Plugin {
      * @param {Array} arguments The arguments passed to dispatch.
      * @param {Promise} promise A promise that will be resolved when the dispatch completes.
      */
-    
+
     /**
      * @event Workflow.StepsChanged
      * @param {Workflow} instance
      * @param {Array} steps The updated array of steps. The array will have a toDAG method
      *  to convert it into a structure that respects dependencies between steps.
      */
-    
+
     /**
      * Represents the state of the Workflow
      * dispatch result. Handlers attached
@@ -129,7 +129,7 @@ export class Workflow extends Plugin {
             CANCELLED: 'cancelled'
         };
     }
-    
+
     /**
      * A collection of possible Error messages
      * the Workflow could generate.
@@ -275,7 +275,7 @@ export class Workflow extends Plugin {
         let executed = new Set(),
             {name, steps, subject} = data.get(this),
             promise = new Promise((resolve, reject, update) => {
-                
+
                 const
                     getExecuted = () => map(Array.from(executed.values()), 'name'),
                     context = {
@@ -323,17 +323,19 @@ export class Workflow extends Plugin {
                             next(isUndefined(err) && `Error occurred in ${step.name}.` || err));
 
                 }, error => {
-                    
+
+                    delete context.cancel;
+
                     if (!isUndefined(error)) {
-                        
+
                         error = error instanceof Error ? error : new Error(toString(error));
                         error.rollbackErrors = [];
-                        
+
                         reduceRight(Array.from(executed.values()), (result, step) => {
                                 let rollback = bind(step.rollback, extend({}, context, step), error);
                                 return result.then(() => Promise.try(rollback).catch(err => error.rollbackErrors.push(err)));
                             }, Promise.resolve()).finally(() => {
-                            
+
                                 steps.toArray().reduce((result, step) => {
                                     let success = bind(step.failure, extend({}, context, step), error);
                                     return result.finally(() => Promise.try(success));
@@ -344,9 +346,9 @@ export class Workflow extends Plugin {
                                         error
                                     }));
                                 });
-                            
+
                         });
-                        
+
                     } else {
 
                         Array.from(executed.values())
@@ -370,14 +372,14 @@ export class Workflow extends Plugin {
         this.emit(Workflow.Events.WF_DISPATCHED, this, args, promise);
 
         return promise;
-        
+
     }
-    
+
     toString() {
         let {name, steps = {}} = data.get(this);
         return `${name}: ${steps.toString()}`;
     }
-    
+
 }
 
 /**
@@ -407,11 +409,11 @@ export class Workflow extends Plugin {
  *  `Workflow.States.SUCCESS`.
  */
 export class WorkflowResult {
-    
+
     constructor(data) {
         assign(this, data);
     }
-    
+
 }
 
 /**
@@ -522,7 +524,7 @@ export class WorkflowStep extends Plugin {
     constructor(props) {
         super(extend({ targetType: Workflow }, props));
     }
-    
+
     init() {}
     execute() {}
     rollback() {}
