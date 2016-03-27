@@ -79,6 +79,7 @@ var data = new WeakMap(),
 };
 
 /**
+ * @classdesc
  * Executes any {@link WorkflowStep} instances associated with
  * the name of the Workflow instance, in dependency-safe order,
  * with automatic rollback of executed steps if any steps fail.
@@ -89,8 +90,6 @@ var data = new WeakMap(),
  *  to associate with the workflow. The only required attribute
  *  is `name`, which will be used to subscribe to any Plugin
  *  instances targeting this Workflow instance.
- * @fires Workflow.Deleted
- * @fires Workflow.Dispatched
  * @fires Workflow.StepsChanged
  * @example
  * var stepOne = new WorkflowStep({
@@ -261,26 +260,27 @@ var Workflow = exports.Workflow = function (_Plugin) {
             throwIfDeleted(this);
             // NOTE: when real Proxy support arrives,
             // switch to that; in the meantime, users
-            // can still delete workflows by going up
-            // the prototype chain
+            // can still delete workflows by manually
+            // traversing the prototype chain
             var proxy = Object.create(this);
             ['asObservable', 'asReadOnly', 'toString', 'dispatch'].forEach(function (name) {
-                console.log('rebinding ' + name);
-                proxy[name] = (0, _bind3.default)(proxy[name], _this2);
+                return proxy[name] = (0, _bind3.default)(proxy[name], _this2);
             });
             proxy.delete = readOnlyMethod;
-            //        let proxy = new Workflow(this),
-            //            thisData = data.get(this),
-            //            proxyData = data.get(proxy);
-            //        proxy.delete = readOnlyMethod;
-            //        proxy.dispatch = bind(proxy.dispatch, this);
-            //        proxyData.subject.unsubscribe();
-            //        proxyData.subject = thisData.subject;
-            //        proxyData.stream$ = thisData.stream$;
             return proxy;
         }
 
-        // TODO: continue documenting
+        /**
+         * Provides a shared stream consumers can subscribe
+         * to in order to receive subsequent dispatch results.
+         * @function Workflow#asObservable
+         * @returns {Rx.Observable}
+         * @example
+         * someWorkflow.asObservable()
+         *   .filter(dispatch => dispatch.status === Workflow.States.SUCCESS)
+         *   .pluck('results') // the values returned by executed steps
+         *   .tap(results => log(results));
+         */
 
     }, {
         key: 'asObservable',
@@ -288,6 +288,18 @@ var Workflow = exports.Workflow = function (_Plugin) {
             throwIfDeleted(this);
             return data.get(this).stream$;
         }
+
+        /**
+         * Deletes the workflow and any associated streams.
+         * Trying to invoke any methods on a deleted workflow
+         * will cause an Error to be thrown.
+         * @function Workflow#delete
+         * @fires Workflow.Deleted
+         * @example
+         * myWorkflow.delete();
+         * myWorkflow.dispatch(); // throws Error
+         */
+
     }, {
         key: 'delete',
         value: function _delete() {
@@ -303,6 +315,36 @@ var Workflow = exports.Workflow = function (_Plugin) {
             data.delete(this);
             this.emit(Workflow.Events.WF_DELETED, this);
         }
+
+        /**
+         * Executes any enabled steps associated with this
+         * Workflow instance, passing the dispatch arguments
+         * to each step's `execute` method and saving each
+         * step's `execute` result.
+         * @function Workflow#dispatch
+         * @param {*} [args] One or more arguments to pass to
+         *  each step's `execute` method.
+         * @returns {Promise<WorkflowResult>} A promise that will never be
+         *  rejected. If a step's `execute` method returns a
+         *  promise that never resolves, this promise will
+         *  also never resolve. Examine the resulting value's
+         *  `status` member to determine whether the dispatch
+         *  ended successfully, failed, or was cancelled.
+         * @fires Workflow.Dispatched
+         * @example
+         * myWorkflow.dispatch(arg1, arg2)
+         *   .then(dispatch => {
+         *     switch (dispatch.status) {
+         *       case Workflow.States.CANCELLED:
+         *       case Workflow.States.FAILED:
+         *         log('dispatch ended early:', dispatch.reason || dispatch.error);
+         *         break;
+         *       case Workflow.States.SUCCESS:
+         *         log(dispatch.results);
+         *     }
+         *   });
+         */
+
     }, {
         key: 'dispatch',
         value: function dispatch() {
@@ -372,6 +414,8 @@ var Workflow = exports.Workflow = function (_Plugin) {
                     });
                 }, function (error) {
 
+                    delete context.cancel;
+
                     if (!(0, _isUndefined3.default)(error)) {
 
                         error = error instanceof Error ? error : new Error((0, _toString3.default)(error));
@@ -387,9 +431,9 @@ var Workflow = exports.Workflow = function (_Plugin) {
                         }, _bluebird.Promise.resolve()).finally(function () {
 
                             steps.toArray().reduce(function (result, step) {
-                                var success = (0, _bind3.default)(step.failure, (0, _extend3.default)({}, context, step), error);
+                                var failure = (0, _bind3.default)(step.failure, (0, _extend3.default)({}, context, step), error);
                                 return result.finally(function () {
-                                    return _bluebird.Promise.try(success);
+                                    return _bluebird.Promise.try(failure);
                                 });
                             }, _bluebird.Promise.resolve()).finally(function () {
                                 resolve(new WorkflowResult({
@@ -439,11 +483,144 @@ var Workflow = exports.Workflow = function (_Plugin) {
     return Workflow;
 }(_cyclePlugins.Plugin);
 
+/**
+ * @classdesc
+ * Represents the result of a dispatched workflow. The
+ * dispatch promise will be resolved with an instance
+ * of WorkflowResult that can be examined to learn more
+ * about how the dispatch concluded.
+ * @class WorkflowResult
+ * @param {Object} data Data about the dispatch. This
+ *  information is provided automatically by the dispatch
+ *  method.
+ * @property {Workflow.States} status The status of the
+ *  dispatch.
+ * @property {String[]} executed The names of the steps
+ *  that executed during the dispatch. Useful for
+ *  determining where an error may have occurred.
+ * @property {Error} error The error that caused the
+ *  dispatch to fail. This property only exists if
+ *  `status` is `Workflow.States.FAILED`.
+ * @property {String|Error} reason The reason the dispatch
+ *  ended early. This property only exists if `status`
+ *  is `Workflow.States.CANCELLED`.
+ * @property {Object} results A map of step names to
+ *  the results of that step's `execute` method. This
+ *  property only exists if `status` is
+ *  `Workflow.States.SUCCESS`.
+ */
+
+
 var WorkflowResult = exports.WorkflowResult = function WorkflowResult(data) {
     _classCallCheck(this, WorkflowResult);
 
     (0, _assign3.default)(this, data);
 };
+
+/**
+ * @class WorkflowStep
+ * @inherits Plugin
+ * @param {Object} props The properties to associate
+ *  with this WorkflowStep instance. The only required
+ *  property is `name`. You can provide Plugin-specific
+ *  values such as `after`, `filter`, and `targetType`
+ *  to restrict which Workflows your WorkflowStep will
+ *  be associated with. You can also override any of the
+ *  built-in WorkflowStep properties, such as `execute`.
+ * @property {Function} init A no-op, unless overridden.
+ * @property {Function} execute A no-op, unless overridden.
+ * @property {Function} retry Rejects, unless overridden.
+ * @property {Function} rollback A no-op, unless overridden.
+ * @property {Function} success A no-op, unless overridden.
+ * @property {Function} failure A no-op, unless overridden.
+ * @classdesc
+ * Represents a single step in a Workflow instance.
+ *
+ * Each WorkflowStep has a lifecycle Workflow follows
+ * during dispatch that you can hook into to control what
+ * happens.
+ *
+ * First, the `init` method is called. This can be used
+ * to initialize instance values used in the other methods.
+ * The `init` method is guaranteed to only be called once
+ * per dispatch.
+ *
+ * Next, the `execute` method is invoked, and passed any
+ * arguments provided to the `Workflow.dispatch` method. If
+ * `execute` returns a Promise, any dependent steps will
+ * not run (and the Workflow dispatch promise will not be
+ * resolved) until the `execute` promise resolves. Whatever
+ * value the `execute` method returns (or a returned Promise
+ * resolves with) will be stored in an internal `results`
+ * map that is accessible to subsequent steps and provided
+ * to the WorkflowResult that the dispatch promise is resolved
+ * with.
+ *
+ * If the `execute` method throws an error or returns a
+ * promise that rejects, then `retry` will be called and
+ * provided with the error reason. If `retry` returns a
+ * rejected promise or throws an error (which is the default
+ * implementation if none is provided), then the dispatch
+ * will be considered failed. Otherwise, returning anything
+ * else (or nothing at all) will cause `execute` to be invoked
+ * again -- potentially an unlimited number of times.
+ *
+ * If the dispatch enters a failed state, then all of the
+ * executed steps' `rollback` methods will be invoked and
+ * provided with the failure reason. Rollbacks are invoked in
+ * the reverse order the `execute` methods were invoked.
+ * This allows your executed steps to perform any cleanup
+ * operations that may be necessary.
+ *
+ * If the dispatch fails, then ALL steps -- even steps that
+ * never had a chance to be executed -- will have their
+ * `failure` method invoked with the reason the dispatch
+ * failed.
+ *
+ * Only if all steps succeed will each executed step's
+ * `success` method be invoked. This method will be passed
+ * the results object that maps step names to the values
+ * returned by their `execute` methods.
+ *
+ * All step lifecycle methods have access to the following
+ * properties on their context (i.e., `this`):
+ *
+ * | Param | Type | Description |
+ * | --- | --- | --- |
+ * |workflow | String | The name of the workflow being dispatched. This is useful when your step might be associated with multiple workflows. |
+ * |results | Object | A map of previously executed steps and the results of their `execute` methods. This is useful when your step is set to run after another step, and you would like to access the results of that step. |
+ * | cancel | Function | A method you can invoke to cancel the dispatch immediately. Note that this method is only available from `init`, `execute`, and `retry`. |
+ * @example
+ * // create a step that attempts to log in 3 times before
+ * // failing the dispatch -- if the execute method succeeds,
+ * // the dispatch results will contain a property called
+ * // 'login-step' whose value will be whatever value the
+ * // `postLogin(...)` promise resolves with
+ * Plugins.register(new WorkflowStep({
+ *   name: 'login-step',
+ *   filter: {any: 'login-workflow'},
+ *   retryCount: 0, // steps can have instance members
+ *   init: () => retryCount = 0, // runs once per dispatch
+ *   execute: (user, hash) => postLogin(user, hash), // return promise
+ *   retry: err => {
+ *     if (++retryCount > 3) {
+ *       throw err; // throwing from retry fails the dispatch
+ *     }
+ *     // wait 1 second and then try again; returning nothing
+ *     // would cause execute to be re-invoked immediately
+ *     return Promise.delay(1000);
+ *   }
+ * }));
+ *
+ * new Workflow({name: 'login-workflow'})
+ *   .dispatch(username, hashPassword)
+ *   .then(dispatch => {
+ *      if (dispatch.status !== Workflow.States.SUCCESS) {
+ *        showErrorMessage(dispatch.error || dispatch.reason);
+ *      }
+ *   });
+ */
+
 
 var WorkflowStep = exports.WorkflowStep = function (_Plugin2) {
     _inherits(WorkflowStep, _Plugin2);
