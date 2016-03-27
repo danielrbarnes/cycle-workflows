@@ -52,6 +52,8 @@ var _get = function get(object, property, receiver) { if (object === null) objec
 
 var _bluebird = require('bluebird');
 
+var _cycleLogger = require('cycle-logger2');
+
 var _rxjs = require('rxjs');
 
 var _cyclePlugins = require('cycle-plugins');
@@ -222,6 +224,7 @@ var Workflow = exports.Workflow = function (_Plugin) {
             name: props.name,
             subject: subject,
             stream$: subject.share(),
+            logger: _cycleLogger.Loggers.get('log.wf.' + props.name),
             steps$: _cyclePlugins.Plugins.get({
                 filter: props.name,
                 targetType: Workflow,
@@ -309,9 +312,11 @@ var Workflow = exports.Workflow = function (_Plugin) {
 
             var subject = _data$get.subject;
             var steps$ = _data$get.steps$;
+            var logger = _data$get.logger;
 
             subject.unsubscribe();
             steps$.unsubscribe();
+            logger.info('Workflow deleted.');
             data.delete(this);
             this.emit(Workflow.Events.WF_DELETED, this);
         }
@@ -361,6 +366,7 @@ var Workflow = exports.Workflow = function (_Plugin) {
             var name = _data$get2.name;
             var steps = _data$get2.steps;
             var subject = _data$get2.subject;
+            var logger = _data$get2.logger;
             var promise = new _bluebird.Promise(function (resolve, reject, update) {
 
                 var getExecuted = function getExecuted() {
@@ -398,6 +404,7 @@ var Workflow = exports.Workflow = function (_Plugin) {
                         execute = step.execute.apply.bind(step.execute, stepContext, args),
                         execLoop = function execLoop() {
                         executed.add(step);
+                        logger.info('Executing ' + step.name + '.');
                         return _bluebird.Promise.try(execute).catch(function (err) {
                             return _bluebird.Promise.try((0, _bind3.default)(step.retry, stepContext, err)).then(execLoop);
                         });
@@ -429,7 +436,7 @@ var Workflow = exports.Workflow = function (_Plugin) {
                                 });
                             });
                         }, _bluebird.Promise.resolve()).finally(function () {
-
+                            logger.info('Dispatch failed: %s', error);
                             steps.toArray().reduce(function (result, step) {
                                 var failure = (0, _bind3.default)(step.failure, (0, _extend3.default)({}, context, step), error);
                                 return result.finally(function () {
@@ -451,6 +458,7 @@ var Workflow = exports.Workflow = function (_Plugin) {
                                 return _bluebird.Promise.try(success);
                             });
                         }, _bluebird.Promise.resolve()).finally(function () {
+                            logger.info('Dispatch succeeded.');
                             resolve(new WorkflowResult({
                                 status: Workflow.States.SUCCESS,
                                 executed: getExecuted(),
@@ -463,6 +471,7 @@ var Workflow = exports.Workflow = function (_Plugin) {
                 return subject.next(result);
             });
 
+            logger.info('Workflow dispatched.');
             this.emit(Workflow.Events.WF_DISPATCHED, this, args, promise);
 
             return promise;

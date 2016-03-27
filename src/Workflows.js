@@ -6,6 +6,7 @@
  */
 
 import {Promise} from 'bluebird';
+import {Loggers} from 'cycle-logger2';
 import {Observable, Subject} from 'rxjs';
 import {Plugin, Plugins} from 'cycle-plugins';
 import {
@@ -165,6 +166,7 @@ export class Workflow extends Plugin {
                 name: props.name,
                 subject: subject,
                 stream$: subject.share(),
+                logger: Loggers.get(`log.wf.${props.name}`),
                 steps$: Plugins.get({
                     filter: props.name,
                     targetType: Workflow,
@@ -233,9 +235,10 @@ export class Workflow extends Plugin {
      */
     delete() {
         throwIfDeleted(this);
-        let {subject, steps$} = data.get(this);
+        let {subject, steps$, logger} = data.get(this);
         subject.unsubscribe();
         steps$.unsubscribe();
+        logger.info('Workflow deleted.');
         data.delete(this);
         this.emit(Workflow.Events.WF_DELETED, this);
     }
@@ -273,7 +276,7 @@ export class Workflow extends Plugin {
         throwIfDeleted(this);
 
         let executed = new Set(),
-            {name, steps, subject} = data.get(this),
+            {name, steps, subject, logger} = data.get(this),
             promise = new Promise((resolve, reject, update) => {
 
                 const
@@ -311,6 +314,7 @@ export class Workflow extends Plugin {
                         execute = step.execute.apply.bind(step.execute, stepContext, args),
                         execLoop = () => {
                             executed.add(step);
+                            logger.info(`Executing ${step.name}.`);
                             return Promise.try(execute)
                                 .catch(err => Promise.try(bind(step.retry, stepContext, err)).then(execLoop));
                         };
@@ -332,21 +336,20 @@ export class Workflow extends Plugin {
                         error.rollbackErrors = [];
 
                         reduceRight(Array.from(executed.values()), (result, step) => {
-                                let rollback = bind(step.rollback, extend({}, context, step), error);
-                                return result.then(() => Promise.try(rollback).catch(err => error.rollbackErrors.push(err)));
+                            let rollback = bind(step.rollback, extend({}, context, step), error);
+                            return result.then(() => Promise.try(rollback).catch(err => error.rollbackErrors.push(err)));
+                        }, Promise.resolve()).finally(() => {
+                            logger.info('Dispatch failed: %s', error);
+                            steps.toArray().reduce((result, step) => {
+                                let failure = bind(step.failure, extend({}, context, step), error);
+                                return result.finally(() => Promise.try(failure));
                             }, Promise.resolve()).finally(() => {
-
-                                steps.toArray().reduce((result, step) => {
-                                    let success = bind(step.failure, extend({}, context, step), error);
-                                    return result.finally(() => Promise.try(success));
-                                }, Promise.resolve()).finally(() => {
-                                    resolve(new WorkflowResult({
-                                        status: Workflow.States.FAILED,
-                                        executed: getExecuted(),
-                                        error
-                                    }));
-                                });
-
+                                resolve(new WorkflowResult({
+                                    status: Workflow.States.FAILED,
+                                    executed: getExecuted(),
+                                    error
+                                }));
+                            });
                         });
 
                     } else {
@@ -356,6 +359,7 @@ export class Workflow extends Plugin {
                                 let success = bind(step.success, extend({}, context, step), context.results);
                                 return result.finally(() => Promise.try(success));
                             }, Promise.resolve()).finally(() => {
+                                logger.info('Dispatch succeeded.');
                                 resolve(new WorkflowResult({
                                     status: Workflow.States.SUCCESS,
                                     executed: getExecuted(),
@@ -369,6 +373,7 @@ export class Workflow extends Plugin {
 
             }).tap(result => subject.next(result));
 
+        logger.info('Workflow dispatched.');
         this.emit(Workflow.Events.WF_DISPATCHED, this, args, promise);
 
         return promise;

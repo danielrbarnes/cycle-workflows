@@ -4,14 +4,18 @@ var merge = require('lodash').merge;
 var expect = require('chai').expect;
 var Workflow = require('../index').Workflow;
 var WorkflowStep = require('../index').WorkflowStep;
-var WorkflowResult = require('../index').WorkflowResult;
 var Plugins = require('cycle-plugins').Plugins;
+var Loggers = require('cycle-logger2').Loggers;
 
 function getStep(name, after, methods) {
+    return getStepForWorkflow('test', name, after, methods);
+}
+
+function getStepForWorkflow(wf, name, after, methods) {
     return new WorkflowStep(merge({
         name: name,
         after: after || [],
-        filter: {any: ['test']},
+        filter: {any: [wf]},
         execute: function execute() {
             return new Promise(function(resolve) {
                 setTimeout(function() {
@@ -39,20 +43,20 @@ function removeSteps() {
 }
 
 describe('Workflow', function() {
-    
+
     beforeEach(addSteps);
     afterEach(removeSteps);
-    
+
     describe('constructor', function() {
-        
+
         beforeEach(function() {
             this.workflow = new Workflow({name: 'test'});
         });
-        
+
         afterEach(function() {
             this.workflow.delete();
         });
-        
+
         it('retrieves matching steps', function() {
             expect(this.workflow.toString()).to.equal(
                 'test: root : [a : [b : [], c : [d : []]]]'
@@ -65,35 +69,35 @@ describe('Workflow', function() {
                 'test: root : [a : [b : [e : []], c : [d : []]]]'
             );
         });
-        
+
     });
-    
+
     describe('States', function() {
-        
+
         it('has expected members', function() {
             expect(Workflow.States).to.have.any.keys(['SUCCESS', 'FAILED', 'CANCELLED']);
         });
-    
+
     });
-    
+
     describe('Errors', function() {
-        
+
         it('has expected members', function() {
             expect(Workflow.Errors).to.have.any.keys(['WORKFLOW_DELETED', 'READONLY_MODE']);
         });
-    
+
     });
-    
+
     describe('Events', function() {
-        
+
         it('has expected members', function() {
             expect(Workflow.Events).to.have.any.keys(['WF_DELETED', 'WF_DISPATCHED', 'WF_STEPS_CHANGED']);
         });
-    
+
     });
-    
+
     describe('.toString', function() {
-        
+
         it('throws if workflow deleted', function() {
             var workflow = new Workflow({name: 'test'});
             workflow.delete();
@@ -101,11 +105,11 @@ describe('Workflow', function() {
                 workflow.delete();
             }).to.throw(Workflow.Errors.WORKFLOW_DELETED);
         });
-        
+
     });
-    
+
     describe('.asReadOnly', function() {
-        
+
         it('can still dispatch', function(done) {
             new Workflow({name: 'test'})
                 .asReadOnly()
@@ -114,14 +118,14 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('throws if delete is called', function() {
             var workflow = new Workflow({name: 'test'}).asReadOnly();
             expect(function() {
                 workflow.delete();
             }).to.throw(Workflow.Errors.READONLY_MODE);
         });
-        
+
         it('throws if workflow deleted', function() {
             var workflow = new Workflow({name: 'test'});
             workflow.delete();
@@ -129,7 +133,7 @@ describe('Workflow', function() {
                 workflow.asReadOnly();
             }).to.throw(Workflow.Errors.WORKFLOW_DELETED);
         });
-        
+
         it('receives values from original dispatch', function(done) {
             var original = new Workflow({name: 'test'}),
                 readonly = original.asReadOnly(),
@@ -139,7 +143,7 @@ describe('Workflow', function() {
             });
             original.dispatch();
         });
-        
+
         it('defers to original dispatch', function(done) {
             var original = new Workflow({name: 'test'}),
                 readonly = original.asReadOnly(),
@@ -149,11 +153,11 @@ describe('Workflow', function() {
             });
             readonly.dispatch();
         });
-        
+
     });
-    
+
     describe('.delete', function() {
-        
+
         it('throws if workflow deleted', function() {
             var workflow = new Workflow({name: 'test'});
             workflow.delete();
@@ -161,16 +165,27 @@ describe('Workflow', function() {
                 workflow.delete();
             }).to.throw(Workflow.Errors.WORKFLOW_DELETED);
         });
-        
+
+        it('logs deletion', function(done) {
+            var token = Loggers.asObservable()
+                .byName('log.wf.test')
+                .subscribe(function(event) {
+                    expect(event.message).to.equal('Workflow deleted.');
+                    token.unsubscribe();
+                    done();
+                });
+            new Workflow({name: 'test'}).delete();
+        });
+
     });
-    
+
     describe('.asObservable', function() {
-        
+
         it('returns Observable', function() {
             var workflow = new Workflow({name: 'test'});
             expect(workflow.asObservable()).to.respondTo('subscribe');
         });
-        
+
         it('throws if workflow deleted', function() {
             var workflow = new Workflow({name: 'test'});
             workflow.delete();
@@ -178,7 +193,7 @@ describe('Workflow', function() {
                 workflow.asObservable();
             }).to.throw(Workflow.Errors.WORKFLOW_DELETED);
         });
-        
+
         it('receives dispatch results', function(done) {
             var successCount = 0,
                 workflow = new Workflow({name: 'test'});
@@ -192,11 +207,11 @@ describe('Workflow', function() {
             workflow.dispatch();
             workflow.dispatch();
         });
-        
+
     });
-    
+
     describe('.dispatch', function() {
-        
+
         it('throws if workflow deleted', function() {
             var workflow = new Workflow({name: 'test'});
             workflow.delete();
@@ -204,10 +219,37 @@ describe('Workflow', function() {
                 workflow.dispatch();
             }).to.throw(Workflow.Errors.WORKFLOW_DELETED);
         });
-        
+
         it('returns Promise', function() {
             var result = new Workflow({name: 'test'}).dispatch();
             expect(result).to.respondTo('then', 'catch');
+        });
+
+        it('logs dispatch', function() {
+            removeSteps();
+            Plugins.add(
+                getStepForWorkflow('temp', '1'),
+                getStepForWorkflow('temp', '2', ['1']),
+                getStepForWorkflow('temp', '3', ['2']),
+                getStepForWorkflow('temp', '4', ['3'])
+            );
+            var messages = [
+                    'Workflow dispatched.',
+                    'Executing 1.',
+                    'Executing 2.',
+                    'Executing 3.',
+                    'Executing 4.',
+                    'Dispatch succeeded.'
+                ],
+                token = Loggers.asObservable()
+                    .byName('temp')
+                    .subscribe(function(event) {
+                        expect(event.message).to.equal(messages.shift());
+                        if (messages.length === 0) {
+                            token.unsubscribe();
+                        }
+                    });
+            new Workflow({name: 'temp'}).dispatch();
         });
 
         it('accepts multiple arguments', function(done) {
@@ -225,7 +267,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('accepts array of arguments', function(done) {
             Plugins.add(getStep('e', ['a'], {
                 execute : function(arg) {
@@ -242,7 +284,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('never rejects - even if cancelled', function(done) {
             Plugins.add(getStep('e', ['a'], {
                 execute : function() {
@@ -257,7 +299,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('never rejects - even if error in step execute', function(done) {
             Plugins.add(getStep('e', ['a'], {
                 execute : function() {
@@ -273,7 +315,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('never rejects - even if step execute rejects', function(done) {
             Plugins.add(getStep('e', ['a'], {
                 execute : function() {
@@ -289,7 +331,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('successful dispatch contains results from all steps', function(done) {
             new Workflow({name: 'test'}).dispatch()
                 .then(function(result) {
@@ -297,7 +339,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('cancelled dispatch contains executed step names', function(done) {
             Plugins.add(getStep('e', ['b'], {
                 execute: function() {
@@ -313,7 +355,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('failed dispatch contains executed step names', function(done) {
             Plugins.add(getStep('e', ['b'], {
                 execute: function() {
@@ -329,7 +371,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('step context has workflow name', function(done) {
             Plugins.add(getStep('e', ['b'], {
                 execute: function() {
@@ -341,7 +383,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('step context has results object (with values)', function(done) {
             Plugins.add(getStep('e', ['d'], {
                 execute: function() {
@@ -353,7 +395,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('step context has cancel method', function(done) {
             Plugins.add(getStep('e', ['b'], {
                 execute: function() {
@@ -365,7 +407,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('step members are available in context', function(done) {
             Plugins.add(getStep('e', ['b'], {
                 instance: 'variable',
@@ -378,7 +420,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('steps do not share custom context', function(done) {
             Plugins.add(
                 getStep('e', ['b'], {
@@ -399,7 +441,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('init called before execute', function(done) {
             Plugins.add(getStep('e', ['b'], {
                 instance: 'variable',
@@ -415,7 +457,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('init not re-invoked if execute fails', function(done) {
             var callCount = 0;
             Plugins.add(getStep('e', ['b'], {
@@ -432,7 +474,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('retry method given failure reason', function(done) {
             var callCount = 0;
             Plugins.add(getStep('e', ['b'], {
@@ -455,7 +497,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('ignores disabled steps', function(done) {
             Plugins.add(getStep('e', ['b'], {
                 enabled: false
@@ -466,7 +508,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('on failed dispatch, rollback only executed methods', function(done) {
             var rollbacks = [];
             Plugins.add(
@@ -486,7 +528,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('if rollback fails, add it to the rollbackErrors result', function(done) {
             Plugins.add(
                 getStep('e', ['b'], {
@@ -523,7 +565,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('on failed dispatch, no steps succeed', function(done) {
             var successes = [];
             Plugins.add(
@@ -542,7 +584,33 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
+        it('cancel method not available in rollback and failure', function(done) {
+            Plugins.add(getStep('e', ['b'], {
+                execute: function() { throw new Error('execute failure'); },
+                rollback: function() {
+                    expect(this).not.to.respondTo('cancel');
+                },
+                failure: function() {
+                    expect(this).not.to.respondTo('cancel');
+                }
+            }));
+            new Workflow({name: 'test'}).dispatch().then(function() {
+                done();
+            });
+        });
+
+        it('cancel method not available in success', function(done) {
+            Plugins.add(getStep('e', ['b'], {
+                success: function() {
+                    expect(this).not.to.respondTo('cancel');
+                }
+            }));
+            new Workflow({name: 'test'}).dispatch().then(function() {
+                done();
+            });
+        });
+
         it('on success dispatch, all steps succeed', function(done) {
             var successes = [];
             Plugins.add(
@@ -562,7 +630,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
         it('on success dispatch, no steps failure', function(done) {
             var failures = [];
             Plugins.add(
@@ -580,7 +648,7 @@ describe('Workflow', function() {
                     done();
                 });
         });
-        
+
     });
-    
+
 });

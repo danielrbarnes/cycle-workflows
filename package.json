@@ -1,6 +1,6 @@
 {
   "name": "cycle-workflows",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Provides Plugin-based Workflows to cycle.js applications.",
   "main": "index.js",
   "scripts": {
@@ -30,6 +30,7 @@
   "dependencies": {
     "bluebird": "^3.3.4",
     "cycle-events": "^0.1.0",
+    "cycle-logger2": "^0.2.0",
     "cycle-plugins": "^0.1.0",
     "lodash": "^4.6.1",
     "rxjs": "^5.0.0-beta.2"
